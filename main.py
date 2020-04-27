@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 
+###############################################################################
+# 尽量使用单线程运行，通过协程管理时间片，实在无法单线程运行的IO密集型程序，可以调用多线程
+# 待解决：
+# 判断websocket断开
+#
+# 2020/4/26 创建 YBA
+###############################################################################
+
 # 网络
 import requests
 import websockets
@@ -27,17 +35,73 @@ notice_priority = {'friend_add': 1, 'group_ban': 3, 'group_increase': 3,
 # 元事件优先级
 meta_event_priority = {'lifecycle': 1, 'heartbeat': 1}
 
+# 接收队列
+global recv_queue
+# 发送队列
+global send_queue
 
-async def process(recv_queue, send_queue):
+
+def add_message(list, msg):
+    data = {}
+    data['type'] = 'text'
+    data['data'] = {
+        'text': msg
+    }
+    list.append(data)
+
+
+async def send_message(msg_type, uid, msg_list):
+    global send_queue
+    priority = post_priority['message'] * 10 + message_priority[msg_type]
+    if msg_type == 'private':
+        uid_type = 'user_id'
+    elif msg_type == 'group':
+        uid_type = 'group_id'
+    elif msg_type == 'discuss':
+        uid_type = 'discuss_id'
+    uid_type
+    send_msg = {}
+    send_msg['action'] = 'send_msg'
+    send_msg['params'] = {
+        uid_type: uid,
+        'message': msg_list
+    }
+    print(send_msg)
+    await send_queue.put((priority, send_msg))
+
+
+async def process():
+    global recv_queue
     while True:
-        data = await recv_queue.get()
-        print(data)
-        # await asyncio.sleep(10)
+        datas = await recv_queue.get()
+        print(datas)
+        data = datas[1]
+        if data['post_type'] == 'message':
+            msg_type = data['message_type']
+            if msg_type == 'private':
+                uid = data['sender']['user_id']
+            elif msg_type == 'group':
+                uid = data['group_id']
+            elif msg_type == 'discuss':
+                uid = data['discuss_id']
+            for msg in data['message']:
+                print(msg)
+                if msg['type'] == 'text':
+                    if msg['data']['text'][0] == '/':
+                        # IO密集型耗时操作，创建一个新task去处理
+                        # asyncio.create_task(example(data))
+                        send_msg = []
+                        add_message(send_msg, '天天就知道看涩图')
+                        await send_message(msg_type, uid, send_msg)
 
 
-async def ws_recv(websocket, recv_queue):
+async def ws_recv(websocket):
+    global recv_queue
     while True:
         msg = json.loads(await websocket.recv())
+        if 'status' in msg:
+            print(msg)
+            continue
         if msg['post_type'] == 'message':
             priority = post_priority['message']*10 + \
                 message_priority[msg['message_type']]
@@ -53,29 +117,43 @@ async def ws_recv(websocket, recv_queue):
         await recv_queue.put((priority, msg))
 
 
-async def ws_send(websocket, send_queue):
+async def ws_send(websocket):
+    global send_queue
     while True:
-        data = await send_queue.get()
-        # await asyncio.sleep(10)
+        data = (await send_queue.get())[1]
+        await websocket.send(json.dumps(data))
 
 
 async def ws_client():
+    global recv_queue, send_queue
     uri = "ws://localhost:8084/?access_token=0312"
-    # 接收队列
     recv_queue = asyncio.PriorityQueue()
-    # 发送队列
     send_queue = asyncio.PriorityQueue()
     async with websockets.connect(uri) as websocket:
-        # 并发
-        await asyncio.gather(
-            ws_recv(websocket, recv_queue),
-            ws_send(websocket, send_queue),
-            process(recv_queue, send_queue),
-        )
+
+        # 并发写法1，相当于wait()
+        # await asyncio.gather(
+        #     ws_recv(websocket, recv_queue),
+        #     ws_send(websocket, send_queue),
+        #     process(recv_queue, send_queue),
+        # )
+        #
+        # 并发写法2，相当于把协程分装成Task
+        # 还可以用asyncio.ensure_future和loop.createtask
+        Tasks = [
+            asyncio.create_task(ws_recv(websocket)),
+            asyncio.create_task(ws_send(websocket)),
+            asyncio.create_task(process())
+        ]
+        await asyncio.wait(Tasks)
+        # 这里用一个列表写在一起了，也可以：
+        #     task1 = asyncio.create_task(task())
+        #     await task1
+        # 这样来写
 
 
 if __name__ == '__main__':
-    # 练练手，这里使用低级API单独处理websocket
+    # 练练手，这里使用底层API
     try:
         ws_loop = asyncio.new_event_loop()
         ws_loop.run_until_complete(ws_client())
@@ -83,6 +161,8 @@ if __name__ == '__main__':
     finally:
         ws_loop.run_until_complete(ws_loop.shutdown_asyncgens())
         ws_loop.close()
+    # 可以使用高级API，直接写成：
+    # asyncio.run(ws_client())
 
 
 ### 闲置函数 ###
