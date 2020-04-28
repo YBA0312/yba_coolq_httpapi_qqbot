@@ -2,10 +2,12 @@
 # -*- coding:utf-8 -*-
 
 ###############################################################################
-# 尽量使用单线程运行，通过协程管理时间片，实在无法单线程运行的IO密集型程序，可以调用多线程
+# 尽量使用单线程运行，通过协程管理时间片
+# 实在无法单线程运行的IO密集型程序，可以调用多线程
+# 
 # 待解决：
 # 判断websocket断开
-#
+# 
 # 2020/4/26 创建 YBA
 ###############################################################################
 
@@ -16,12 +18,15 @@ import websockets
 import os
 import sys
 import json
+import re
 import time
 # 协程
 import asyncio
+# 数据库
+import pymysql
 # 二维码
-import qrcode
-import pyzbar
+# import qrcode
+# import pyzbar
 
 # 回调类型优先级
 post_priority = {'message': 1, 'notice': 2, 'request': 3, 'meta_event': 4}
@@ -155,7 +160,7 @@ async def ws_client():
 if __name__ == '__main__':
     # 练练手，这里使用底层API
     try:
-        ws_loop = asyncio.new_event_loop()
+        ws_loop = asyncio.get_event_loop()
         ws_loop.run_until_complete(ws_client())
         ws_loop.run_forever()
     finally:
@@ -166,10 +171,12 @@ if __name__ == '__main__':
 
 
 ### 闲置函数 ###
-
+'''
 
 def DecodeQR(filename):
     if not os.path.exists(filename):
         raise FileExistsError(filename)
 
     return pyzbar.decode(Image.open(filename), symbols=[pyzbar.ZBarSymbol.QRCODE])
+
+'''
