@@ -13,15 +13,15 @@ class mysql():
     async def fetch(self, data):
         # print(data)
         # 从连接池中获取连接
-        with (await self.g_pool) as self.conn:
+        with (await self.g_pool) as conn:
             # 用这个连接执行数据库操作
-            self.cursor = await self.conn.cursor()
+            cursor = await conn.cursor()
             # print(self.cursor)
-            await self.cursor.execute(data)
-            self.rows = await self.cursor.fetchall()
+            await cursor.execute(data)
+            rows = await cursor.fetchall()
             # print(self.rows)
             # with 退出后，将自动释放 conn 到 g_pool 中
-        return self.rows
+        return rows
 
     async def close(self):
         self.g_pool.close()
@@ -34,6 +34,6 @@ class mysql():
                                                  password='0312',
                                                  db=db,
                                                  autocommit=True,
-                                                 minsize=1,
-                                                 maxsize=30
+                                                 minsize=5,
+                                                 maxsize=10
                                                  )

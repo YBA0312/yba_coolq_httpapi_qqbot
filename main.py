@@ -16,14 +16,17 @@
 import websockets
 # 工具
 # import os
+# import shutil
 # import sys
 import json
-# import re
-# import time
+import re
+import time
 # 协程
 import asyncio
 # 数据库
 import sql
+# konachan
+import konachan
 # 二维码
 # import qrcode
 # import pyzbar
@@ -44,22 +47,36 @@ meta_event_priority = {'lifecycle': 1, 'heartbeat': 1}
 recv_queue = None
 # 发送队列
 send_queue = None
-# # 聊天记录数据库
-# mysql_chat = None
+
+my_qq = '1052002233'
+super_qq = ['824381616']
 
 ###############################################################################
-
 
 async def recv_message(msg_type, uid, data):
+    send_msg = []
     for msg in data['message']:
         print(msg)
-        if msg['type'] == 'text':
-            if msg['data']['text'][0] == '/':
-                send_msg = []
-                add_message(send_msg, '天天就知道看涩图')
-                await send_message(msg_type, uid, send_msg)
+        if msg['type'] == 'at' and msg['data'].get('qq') == my_qq:
+            add_message(send_msg, '在呢')
+        elif msg['type'] == 'text' and '不涩的图' in msg['data'].get('text'):
+            add_image(send_msg, await k_site.get_image_url())
+        elif msg['type'] == 'text' and '涩图' in msg['data'].get('text'):
+            add_message(send_msg, '小孩子想Peach呢')
+        else:
+            return
+    await send_message(msg_type, uid, send_msg)
+
 
 ###############################################################################
+
+def add_image(list, img):
+    data = {}
+    data['type'] = 'image'
+    data['data'] = {
+        'file': img
+    }
+    list.append(data)
 
 
 def add_message(list, msg):
@@ -76,19 +93,22 @@ async def send_message(msg_type, uid, msg_list):
     priority = post_priority['message'] * 10 + message_priority[msg_type]
     if msg_type == 'private':
         uid_type = 'user_id'
+        table = 'P' + str(uid)
     elif msg_type == 'group':
         uid_type = 'group_id'
+        table = 'G' + str(uid)
     elif msg_type == 'discuss':
         uid_type = 'discuss_id'
-    uid_type
+        table = 'D' + str(uid)
     send_msg = {}
-    send_msg['action'] = 'send_msg'
+    send_msg['action'] = 'send_msg_async'
     send_msg['params'] = {
         uid_type: uid,
         'message': msg_list
     }
     print(send_msg)
     await send_queue.put((priority, send_msg))
+    await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, int(time.time()), my_qq, json.dumps(send_msg['params']['message'], ensure_ascii=False)))
 
 
 async def process():
@@ -113,9 +133,9 @@ async def process():
                 table = 'D' + str(uid)
             # IO密集型耗时操作，创建一个新task去处理
             asyncio.create_task(recv_message(msg_type, uid, data))
-            if (not await mysql_chat.fetch('SHOW TABLES LIKE "{}";'.format(table))):  # FROM_UNIXTIME
+            if (not await mysql_chat.fetch('SHOW TABLES LIKE "{}";'.format(table))):
                 await mysql_chat.fetch('CREATE TABLE `qq_chat`.`{}` ( `id` INT UNSIGNED NOT NULL AUTO_INCREMENT , `datetime` DATETIME NOT NULL , `uid` VARCHAR(11) NOT NULL , `msg` JSON NOT NULL , PRIMARY KEY (`id`)) ENGINE = InnoDB;'.format(table))
-            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, data['time'], user_id, json.dumps(data['message'])))
+            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, data['time'], user_id, json.dumps(data['message'], ensure_ascii=False).replace("\\", "\\\\")))
 
 
 async def ws_recv(websocket):
@@ -159,6 +179,7 @@ async def ws_client():
             ws_recv(websocket),
             ws_send(websocket),
             mysql_chat.create('qq_chat'),
+            k_site.add_html(),
             process()
         )
         #
@@ -179,6 +200,8 @@ async def ws_client():
 if __name__ == '__main__':
     # 创建MySQL连接池
     mysql_chat = sql.mysql()
+    # aiohttp
+    k_site = konachan.konachan()
     # 练练手，这里使用底层API
     # try:
     #     ws_loop = asyncio.get_event_loop()
