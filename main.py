@@ -2,13 +2,10 @@
 # -*- coding:utf-8 -*-
 
 ###############################################################################
-# 尽量使用单线程运行，通过协程管理时间片
-# 实在无法单线程运行的IO密集型程序，可以调用多线程
-#
+# 备忘录
+# 
 # 待解决：
 # 判断websocket断开
-#
-# 2020/4/26 创建 YBA
 ###############################################################################
 
 # 网络
@@ -18,11 +15,12 @@ import websockets
 # import os
 # import shutil
 # import sys
-import json
+import ujson
 import re
 import time
 # 协程
 import asyncio
+import uvloop
 # 数据库
 import sql
 # konachan
@@ -59,13 +57,12 @@ async def recv_message(msg_type, uid, data):
         print(msg)
         if msg['type'] == 'at' and msg['data'].get('qq') == my_qq:
             add_message(send_msg, '在呢')
-        elif msg['type'] == 'text' and '不涩的图' in msg['data'].get('text'):
-            add_image(send_msg, await k_site.get_image_url())
-        elif msg['type'] == 'text' and '涩图' in msg['data'].get('text'):
-            add_message(send_msg, '小孩子想Peach呢')
-        else:
-            return
-    await send_message(msg_type, uid, send_msg)
+            await k_site.image_cacha()
+        elif msg['type'] == 'text' and '图' in msg['data'].get('text'):
+            print('in')
+            add_image(send_msg, await k_site.get_cache_image())
+    if send_msg:
+        await send_message(msg_type, uid, send_msg)
 
 
 ###############################################################################
@@ -88,6 +85,11 @@ def add_message(list, msg):
     list.append(data)
 
 
+async def get_version_info():
+    send_msg = {'action':'get_version_info'}
+    await send_queue.put((0, send_msg))
+
+
 async def send_message(msg_type, uid, msg_list):
     global send_queue
     priority = post_priority['message'] * 10 + message_priority[msg_type]
@@ -108,14 +110,14 @@ async def send_message(msg_type, uid, msg_list):
     }
     print(send_msg)
     await send_queue.put((priority, send_msg))
-    await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, int(time.time()), my_qq, json.dumps(send_msg['params']['message'], ensure_ascii=False)))
+    await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, int(time.time()), my_qq, ujson.dumps(send_msg['params']['message'], ensure_ascii=False)))
 
 
 async def process():
     global recv_queue
     while True:
         datas = await recv_queue.get()
-        print(datas)
+        # print(datas)
         data = datas[1]
         if data['post_type'] == 'message':
             msg_type = data['message_type']
@@ -135,15 +137,15 @@ async def process():
             asyncio.create_task(recv_message(msg_type, uid, data))
             if (not await mysql_chat.fetch('SHOW TABLES LIKE "{}";'.format(table))):
                 await mysql_chat.fetch('CREATE TABLE `qq_chat`.`{}` ( `id` INT UNSIGNED NOT NULL AUTO_INCREMENT , `datetime` DATETIME NOT NULL , `uid` VARCHAR(11) NOT NULL , `msg` JSON NOT NULL , PRIMARY KEY (`id`)) ENGINE = InnoDB;'.format(table))
-            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, data['time'], user_id, json.dumps(data['message'], ensure_ascii=False).replace("\\", "\\\\")))
+            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, data['time'], user_id, ujson.dumps(data['message'], ensure_ascii=False).replace("\\", "\\\\")))
 
 
 async def ws_recv(websocket):
     global recv_queue
     while True:
-        msg = json.loads(await websocket.recv())
+        msg = ujson.loads(await websocket.recv())
+        print(msg)
         if 'status' in msg:
-            print(msg)
             continue
         if msg['post_type'] == 'message':
             priority = post_priority['message']*10 + \
@@ -164,7 +166,7 @@ async def ws_send(websocket):
     global send_queue
     while True:
         data = (await send_queue.get())[1]
-        await websocket.send(json.dumps(data))
+        await websocket.send(ujson.dumps(data))
 
 
 async def ws_client():
@@ -172,15 +174,15 @@ async def ws_client():
     uri = "ws://localhost:8084/?access_token=0312"
     recv_queue = asyncio.PriorityQueue()
     send_queue = asyncio.PriorityQueue()
+    await mysql_chat.create('qq_chat')
+    await k_site.init()
     async with websockets.connect(uri) as websocket:
-
         # 并发写法1，相当于wait()
         await asyncio.gather(
             ws_recv(websocket),
             ws_send(websocket),
-            mysql_chat.create('qq_chat'),
-            k_site.add_html(),
-            process()
+            process(),
+            get_version_info()
         )
         #
         # 并发写法2，相当于把协程分装成Task
@@ -204,13 +206,14 @@ if __name__ == '__main__':
     k_site = konachan.konachan()
     # 练练手，这里使用底层API
     # try:
-    #     ws_loop = asyncio.get_event_loop()
+    #     ws_loop = asyncio.get_event_loop_policy()
     #     ws_loop.run_until_complete(ws_client())
     #     ws_loop.run_forever()
     # finally:
     #     ws_loop.run_until_complete(ws_loop.shutdown_asyncgens())
     #     ws_loop.close()
     # 可以使用高级API，直接写成：
+    uvloop.install()
     asyncio.run(ws_client())
 
 

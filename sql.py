@@ -2,9 +2,10 @@
 import aiomysql
 # 协程
 import asyncio
+import uvloop
 # 工具
-import json
-import time
+# import ujson
+# import time
 
 
 class mysql():
@@ -34,6 +35,6 @@ class mysql():
                                                  password='0312',
                                                  db=db,
                                                  autocommit=True,
-                                                 minsize=5,
-                                                 maxsize=10
+                                                 minsize=3,
+                                                 maxsize=30
                                                  )
