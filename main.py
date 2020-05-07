@@ -20,6 +20,7 @@ import ujson
 import re
 import time
 import random
+import bisect
 # 协程
 import asyncio
 import uvloop
@@ -73,8 +74,11 @@ async def recv_message(msg_type, uid, user_id, data):
         elif msg['type'] == 'text':
             if '/涩图' in msg['data'].get('text'):
                 tags = msg['data'].get('text').split()[1:]
-                page = 901
+                page = 1201
                 url = []
+                if not tags:
+                    tags = tags + await get_hobby_tag(user_id, 2)
+                    tags = tags + await get_hobby_tag(user_id, 2, False)
                 while True:
                     url = await k_site.get_image_url(random.randint(1, page), 1, tags)
                     if url or page == 1:
@@ -137,11 +141,13 @@ async def recv_message(msg_type, uid, user_id, data):
                         add_message(send_msg, 'Master已经订阅过了')
                     else:
                         try:
-                            await mysql_hobby.fetch('INSERT INTO `konachan`(`uid`) VALUES (\'{}\')'.format(uid))
+                            await mysql_hobby.fetch('INSERT INTO `konachan`(`uid`, `last`) VALUES (\'{}\', \'2000-01-01\')'.format(uid))
                         except:
                             add_message(send_msg, '订阅失败')
                             break
-                        add_message(send_msg, '订阅成功，从今天起你就是我的Master了！')
+                        add_message(send_msg, '订阅成功，从今天起你就是我的Master了！\n')
+                        add_message(
+                            send_msg, '在任何地方，对于当前聊天的上一张图片，喜欢的扣1，不喜欢的扣2')
             # 1
             # 喜欢推荐
             elif msg['data'].get('text') == '1':
@@ -164,8 +170,8 @@ async def recv_message(msg_type, uid, user_id, data):
                             user_tags[tag] = user_tags[tag] + 1
                         else:
                             user_tags[tag] = 1
-                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\' WHERE `uid` = \'{}\''
-                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_id))
+                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\',`num` = {} WHERE `uid` = \'{}\''
+                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_num + 1, user_id))
                     add_message(send_msg, '(๑•̀ㅂ•́)و✧')
             # 2
             # 不喜欢推荐
@@ -192,9 +198,39 @@ async def recv_message(msg_type, uid, user_id, data):
                     await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\' WHERE `uid` = \'{}\''
                                             .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_id))
                     add_message(send_msg, 'ヽ(ー_ー )ノ')
-
     if send_msg:
         await send_message(msg_type, uid, send_msg)
+
+
+async def get_hobby_tag(uid, c, unsigned=True):
+    tags, num = (await mysql_hobby.fetch('SELECT `tags`, `num` FROM `konachan` WHERE `uid` = \'{}\''.format(uid)))[0]
+    tags = ujson.loads(tags)
+    new_tags = {}
+    r_tag = []
+    if tags:
+        if unsigned:
+            for tag, value in tags.items():
+                if value * 10 > num:
+                    new_tags[tag] = value
+        else:
+            for tag, value in tags.items():
+                if value * -10 > num:
+                    new_tags['-'+tag] = value * -1
+        sorted(new_tags.items(), key=lambda item: item[1], reverse=True)
+        for i in range(c):
+            if new_tags:
+                tags_list = []
+                sum_list = []
+                sum = 0
+                for tag, value in new_tags.items():
+                    sum = sum + value
+                    sum_list.append(sum)
+                    tags_list.append(tag)
+                t = random.randint(0, sum - 1)
+                t = bisect.bisect_right(sum_list, t)
+                del new_tags[tags_list[t]]
+                r_tag.append(tags_list.pop(t))
+        return r_tag
 
 
 async def timer():
@@ -232,7 +268,7 @@ def add_message(list, msg):
 
 async def set_friend_add_request(approve, data):
     global send_queue
-    priority = post_priority['request'] * 10 + message_priority['friend']
+    priority = post_priority['request'] * 10 + request_priority['friend']
     send_msg = {}
     send_msg['action'] = 'set_friend_add_request'
     send_msg['params'] = {

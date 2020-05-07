@@ -66,20 +66,24 @@ class konachan():
     async def image_download(self, url):
         filename = urllib.parse.unquote(os.path.basename(url))
         print(filename)
-        async with aiohttp.ClientSession(trust_env=True) as session:
-            async with session.get(url) as resp:
-                # async with aiofiles.open(self.path + filename, mode='wb') as f:
-                #     await f.write(await resp.read())
-                img = Image.open(BytesIO(await resp.read()))
-                img.putpixel((0, 0), (0, 0, 0))
-                # img[0, 0] = (0, 0, 0)
-                # img = img.convert('RGB')
-                img.save(self.path + filename)
-        self.downloaded_cache_list.append(filename)
-        await self.mysql_image.fetch('UPDATE `konachan` SET `file_name`=\'{}\' WHERE `jpeg_url` = \'{}\''.format(filename, url))
+        if not await self.mysql_image.fetch('SELECT id FROM `konachan` WHERE `file_name` = \'{}\''.format(filename.replace("\\", "\\\\").replace("'", "\\'"))):
+            async with aiohttp.ClientSession(trust_env=True) as session:
+                async with session.get(url) as resp:
+                    # async with aiofiles.open(self.path + filename, mode='wb') as f:
+                    #     await f.write(await resp.read())
+                    img = Image.open(BytesIO(await resp.read()))
+                    img.putpixel((0, 0), (0, 0, 0))
+                    # img[0, 0] = (0, 0, 0)
+                    # img = img.convert('RGB')
+                    img.save(self.path + filename)
+            self.downloaded_cache_list.append(filename)
+            await self.mysql_image.fetch('UPDATE `konachan` SET `file_name`=\'{}\' WHERE `jpeg_url` = \'{}\''.format(filename.replace("\\", "\\\\").replace("'", "\\'"), url))
+        else:
+            self.downloaded_cache_list.append(filename)
         return filename
 
-    async def get_image_url(self, page=1, limit=1, tags=['-all_male', '-rating:e']):
+    async def get_image_url(self, page=1, limit=1, tags=['-all_male']):
+        # tags.append('-rating:e')
         tags_str = ''
         for tag in tags:
             tags_str = tags_str + '+' + tag
@@ -103,7 +107,7 @@ class konachan():
                       .format(img['id'], ujson.dumps(img['tags'].split(), ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), img['source'], img['file_url'], img['preview_url'], img['sample_url'], img['jpeg_url'], img['rating']))
                 await self.mysql_image.fetch('INSERT INTO `konachan`(`img_id`, `tags`, `source`, `file_url`, `preview_url`, `sample_url`, `jpeg_url`, `rating`) VALUES ({},\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\')'
                                              .format(img['id'], ujson.dumps(img['tags'].split(), ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), img['source'], img['file_url'], img['preview_url'], img['sample_url'], img['jpeg_url'], img['rating']))
-                img_url.append(img['jpeg_url'])
+            img_url.append(img['jpeg_url'])
         return img_url
 
 # old
