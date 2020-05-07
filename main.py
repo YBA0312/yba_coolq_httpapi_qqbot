@@ -2,8 +2,9 @@
 # -*- coding:utf-8 -*-
 
 ###############################################################################
+# 小学生代码，不建议看，浪费时间
 # 备忘录
-# 
+#
 # 待解决：
 # 判断websocket断开
 ###############################################################################
@@ -18,6 +19,7 @@ import websockets
 import ujson
 import re
 import time
+import random
 # 协程
 import asyncio
 import uvloop
@@ -46,26 +48,169 @@ recv_queue = None
 # 发送队列
 send_queue = None
 
+# 信号
+signal = {}
+
 my_qq = '1052002233'
 super_qq = ['824381616']
 
 ###############################################################################
 
-async def recv_message(msg_type, uid, data):
+
+async def recv_message(msg_type, uid, user_id, data):
+    global signal
     send_msg = []
-    for msg in data['message']:
+    for i in range(len(data['message'])):
+        msg = data['message'][i]
         print(msg)
+        # @自己
+        # 发送缓存图片
         if msg['type'] == 'at' and msg['data'].get('qq') == my_qq:
-            add_message(send_msg, '在呢')
-            await k_site.image_cacha()
-        elif msg['type'] == 'text' and '图' in msg['data'].get('text'):
-            print('in')
+            # add_message(send_msg, '在呢')
             add_image(send_msg, await k_site.get_cache_image())
+        # 收到包含'/涩图 xxx'
+        # 查找对应标签图
+        elif msg['type'] == 'text':
+            if '/涩图' in msg['data'].get('text'):
+                tags = msg['data'].get('text').split()[1:]
+                page = 901
+                url = []
+                while True:
+                    url = await k_site.get_image_url(random.randint(1, page), 1, tags)
+                    if url or page == 1:
+                        break
+                    page = page - 300
+                if url:
+                    filename = await k_site.image_download(url[0])
+                    add_image(send_msg, filename)
+                else:
+                    add_message(send_msg, '没有找到哦')
+                    break
+            # /消息回溯 x
+            # 查询消息
+            elif '/消息回溯' in msg['data'].get('text') and msg_type == 'group':
+                m = msg['data'].get('text').split()
+                if len(m) > 1:
+                    num = m[1]
+                    if (num.isdigit()):
+                        row = await mysql_chat.fetch('SELECT * FROM `G{}` WHERE `uid` <> \'{}\' ORDER BY id DESC LIMIT {},1'
+                                                     .format(uid, my_qq, int(num)-1))
+                        if row:
+                            add_at(send_msg, row[0][2])
+                            add_message(send_msg, '\n{}\n'.format(row[0][1]))
+                            send_msg = send_msg + ujson.loads(row[0][3])
+                        else:
+                            add_message(send_msg, '没有找到哦')
+            # 收到管理者包含'/更新标签'
+            # 更新tags
+            elif '/更新标签' in msg['data'].get('text'):
+                if uid in super_qq:
+                    add_message(send_msg, '开始更新')
+                    await send_message(msg_type, uid, send_msg)
+                    send_msg = []
+                    # await k_site.update_tags()
+                    add_message(send_msg, '更新完成')
+                else:
+                    add_message(send_msg, '权限不足')
+            # /取消订阅
+            # 每日推荐
+            elif msg['data'].get('text') == '取消订阅':
+                if msg_type == 'group':
+                    add_message(send_msg, '私戳我')
+                elif msg_type == 'private':
+                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    if row:
+                        try:
+                            await mysql_hobby.fetch('DELETE FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                        except:
+                            add_message(send_msg, '取消订阅失败')
+                            break
+                        add_message(send_msg, '取消订阅成功，我将忘记一切关于Master的记忆')
+            # /订阅
+            # 每日推荐
+            elif msg['data'].get('text') == '订阅':
+                if msg_type == 'group':
+                    add_message(send_msg, '私戳我')
+                elif msg_type == 'private':
+                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    if row:
+                        add_message(send_msg, 'Master已经订阅过了')
+                    else:
+                        try:
+                            await mysql_hobby.fetch('INSERT INTO `konachan`(`uid`) VALUES (\'{}\')'.format(uid))
+                        except:
+                            add_message(send_msg, '订阅失败')
+                            break
+                        add_message(send_msg, '订阅成功，从今天起你就是我的Master了！')
+            # 1
+            # 喜欢推荐
+            elif msg['data'].get('text') == '1':
+                row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
+                if not row:
+                    continue
+                if row[0][1]:
+                    user_tags = ujson.loads(row[0][1])
+                else:
+                    user_tags = {}
+                user_num = row[0][2]
+                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT 1'
+                                             .format(msg_type[0].upper(), uid, my_qq))
+                if row:
+                    msg = ujson.loads(row[0][0])
+                    filename = msg[0]['data']['file']
+                    tags = await k_site.get_tags(filename)
+                    for tag in tags:
+                        if tag in user_tags:
+                            user_tags[tag] = user_tags[tag] + 1
+                        else:
+                            user_tags[tag] = 1
+                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\' WHERE `uid` = \'{}\''
+                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_id))
+                    add_message(send_msg, '(๑•̀ㅂ•́)و✧')
+            # 2
+            # 不喜欢推荐
+            elif msg['data'].get('text') == '2':
+                row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
+                if not row:
+                    continue
+                if row[0][1]:
+                    user_tags = ujson.loads(row[0][1])
+                else:
+                    user_tags = {}
+                user_num = row[0][2]
+                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT 1'
+                                             .format(msg_type[0].upper(), uid, my_qq))
+                if row:
+                    msg = ujson.loads(row[0][0])
+                    filename = msg[0]['data']['file']
+                    tags = await k_site.get_tags(filename)
+                    for tag in tags:
+                        if tag in user_tags:
+                            user_tags[tag] = user_tags[tag] - 1
+                        else:
+                            user_tags[tag] = -1
+                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\' WHERE `uid` = \'{}\''
+                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_id))
+                    add_message(send_msg, 'ヽ(ー_ー )ノ')
+
     if send_msg:
         await send_message(msg_type, uid, send_msg)
 
 
+async def timer():
+    pass
+
 ###############################################################################
+
+
+def add_at(list, uid):
+    data = {}
+    data['type'] = 'at'
+    data['data'] = {
+        'qq': uid
+    }
+    list.append(data)
+
 
 def add_image(list, img):
     data = {}
@@ -85,8 +230,27 @@ def add_message(list, msg):
     list.append(data)
 
 
+async def set_friend_add_request(approve, data):
+    global send_queue
+    priority = post_priority['request'] * 10 + message_priority['friend']
+    send_msg = {}
+    send_msg['action'] = 'set_friend_add_request'
+    send_msg['params'] = {
+        'flag': data['flag'],
+        'approve': approve
+    }
+    print('----------SEND---------')
+    print(send_msg)
+    await send_queue.put((priority, send_msg))
+    send_msg = []
+    add_message(send_msg, '添加好友 {}\n{}'.format(
+        data['user_id'], data['comment']))
+    for uid in super_qq:
+        await send_message('private', uid, send_msg)
+
+
 async def get_version_info():
-    send_msg = {'action':'get_version_info'}
+    send_msg = {'action': 'get_version_info'}
     await send_queue.put((0, send_msg))
 
 
@@ -95,22 +259,24 @@ async def send_message(msg_type, uid, msg_list):
     priority = post_priority['message'] * 10 + message_priority[msg_type]
     if msg_type == 'private':
         uid_type = 'user_id'
-        table = 'P' + str(uid)
+        table = 'P' + uid
     elif msg_type == 'group':
         uid_type = 'group_id'
-        table = 'G' + str(uid)
+        table = 'G' + uid
     elif msg_type == 'discuss':
         uid_type = 'discuss_id'
-        table = 'D' + str(uid)
+        table = 'D' + uid
     send_msg = {}
     send_msg['action'] = 'send_msg_async'
     send_msg['params'] = {
         uid_type: uid,
         'message': msg_list
     }
+    print('----------SEND---------')
     print(send_msg)
     await send_queue.put((priority, send_msg))
-    await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, int(time.time()), my_qq, ujson.dumps(send_msg['params']['message'], ensure_ascii=False)))
+    await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'
+                           .format(table, int(time.time()), my_qq, ujson.dumps(send_msg['params']['message'], ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'")))
 
 
 async def process():
@@ -122,28 +288,34 @@ async def process():
         if data['post_type'] == 'message':
             msg_type = data['message_type']
             if msg_type == 'private':
-                uid = data['sender']['user_id']
+                uid = str(data['sender']['user_id'])
                 user_id = uid
-                table = 'P' + str(uid)
+                table = 'P' + uid
             elif msg_type == 'group':
-                uid = data['group_id']
-                user_id = data['sender']['user_id']
-                table = 'G' + str(uid)
+                uid = str(data['group_id'])
+                user_id = str(data['sender']['user_id'])
+                table = 'G' + uid
             elif msg_type == 'discuss':
-                uid = data['discuss_id']
-                user_id = data['sender']['user_id']
-                table = 'D' + str(uid)
+                uid = str(data['discuss_id'])
+                user_id = str(data['sender']['user_id'])
+                table = 'D' + uid
             # IO密集型耗时操作，创建一个新task去处理
-            asyncio.create_task(recv_message(msg_type, uid, data))
+            asyncio.create_task(recv_message(msg_type, uid, user_id, data))
             if (not await mysql_chat.fetch('SHOW TABLES LIKE "{}";'.format(table))):
-                await mysql_chat.fetch('CREATE TABLE `qq_chat`.`{}` ( `id` INT UNSIGNED NOT NULL AUTO_INCREMENT , `datetime` DATETIME NOT NULL , `uid` VARCHAR(11) NOT NULL , `msg` JSON NOT NULL , PRIMARY KEY (`id`)) ENGINE = InnoDB;'.format(table))
-            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'.format(table, data['time'], user_id, ujson.dumps(data['message'], ensure_ascii=False).replace("\\", "\\\\")))
+                await mysql_chat.fetch('CREATE TABLE `qq_chat`.`{}` ( `id` INT UNSIGNED NOT NULL AUTO_INCREMENT , `datetime` DATETIME NOT NULL , `uid` VARCHAR(11) NOT NULL , `msg` JSON NOT NULL , PRIMARY KEY (`id`)) ENGINE = InnoDB;'
+                                       .format(table))
+            await mysql_chat.fetch('INSERT INTO `{}` (`datetime`, `uid`, `msg`) VALUES (FROM_UNIXTIME({}), \'{}\', \'{}\')'
+                                   .format(table, data['time'], user_id, ujson.dumps(data['message'], ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'")))
+        elif data['post_type'] == 'request':
+            if data['request_type'] == 'friend':
+                asyncio.create_task(set_friend_add_request(True, data))
 
 
 async def ws_recv(websocket):
     global recv_queue
     while True:
         msg = ujson.loads(await websocket.recv())
+        print('----------RECV---------')
         print(msg)
         if 'status' in msg:
             continue
@@ -175,6 +347,8 @@ async def ws_client():
     recv_queue = asyncio.PriorityQueue()
     send_queue = asyncio.PriorityQueue()
     await mysql_chat.create('qq_chat')
+    await mysql_hobby.create('qq_hobby')
+    await asyncio.sleep(3)
     await k_site.init()
     async with websockets.connect(uri) as websocket:
         # 并发写法1，相当于wait()
@@ -182,7 +356,8 @@ async def ws_client():
             ws_recv(websocket),
             ws_send(websocket),
             process(),
-            get_version_info()
+            get_version_info(),
+            timer()
         )
         #
         # 并发写法2，相当于把协程分装成Task
@@ -202,6 +377,7 @@ async def ws_client():
 if __name__ == '__main__':
     # 创建MySQL连接池
     mysql_chat = sql.mysql()
+    mysql_hobby = sql.mysql()
     # aiohttp
     k_site = konachan.konachan()
     # 练练手，这里使用底层API

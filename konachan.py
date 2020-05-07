@@ -11,6 +11,8 @@ import urllib.parse
 import random
 import os
 import shutil
+from PIL import Image
+from io import BytesIO
 # http://konachan.net/
 # http://konachan.net/post?tags=+-all_male
 # https://konachan.net/sample/3a4527460792a52209af3286947d2a0e/Konachan.com%20-%20305816%20sample.jpg
@@ -29,15 +31,35 @@ class konachan():
         await self.mysql_image.create('qq_image')
         asyncio.create_task(self.image_cache())
 
+    async def get_tags(self, filename):
+        row = await self.mysql_image.fetch('SELECT `tags` FROM `konachan` WHERE `file_name` = \'{}\''.format(filename))
+        if row:
+            return ujson.loads(row[0][0])
+
+    async def update_tags(self):
+        # ON DUPLICATE KEY UPDATE
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            async with session.get('http://konachan.net/tag.json?limit=0') as resp:
+                tags = ujson.loads(await resp.text())
+        for tag in tags:
+            print('INSERT INTO `konachan_tags` VALUES ({},\'{}\',{},{},{}) ON DUPLICATE KEY UPDATE `name`=\'{}\',`count`={},`type`={},`ambiguous`={}'
+                  .format(tag['id'], tag['name'].replace("\\", "\\\\").replace("'", "\\'"), tag['count'], tag['type']+1, tag['ambiguous'], tag['name'].replace("\\", "\\\\").replace("'", "\\'"), tag['count'], tag['type']+1, tag['ambiguous']))
+            await self.mysql_image.fetch('INSERT INTO `konachan_tags` VALUES ({},\'{}\',{},{},{}) ON DUPLICATE KEY UPDATE `name`=\'{}\',`count`={},`type`={},`ambiguous`={}'
+                                         .format(tag['id'], tag['name'].replace("\\", "\\\\").replace("'", "\\'"), tag['count'], tag['type']+1, tag['ambiguous'], tag['name'].replace("\\", "\\\\").replace("'", "\\'"), tag['count'], tag['type']+1, tag['ambiguous']))
+
     async def get_cache_image(self):
         if len(self.downloaded_cache_list) < 5:
             asyncio.create_task(self.image_cache())
         return self.downloaded_cache_list.pop(0)
 
     async def image_cache(self):
-        rows = await self.mysql_image.fetch('SELECT id FROM `konachan` WHERE `file_name` = NULL')
-        urls = await self.get_image_url(random.randint(1, 100), 5)
-        print(urls)
+        urls = []
+        rows = await self.mysql_image.fetch('SELECT `jpeg_url` FROM `konachan` WHERE `file_name` = NULL')
+        if rows:
+            for row in rows:
+                urls.append(row[0])
+        urls = urls + await self.get_image_url(random.randint(1, 1000), 5)
+        # print(urls)
         for url in urls:
             asyncio.create_task(self.image_download(url))
 
@@ -46,26 +68,41 @@ class konachan():
         print(filename)
         async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.get(url) as resp:
-                async with aiofiles.open(self.path + filename, mode='wb') as f:
-                    await f.write(await resp.read())
+                # async with aiofiles.open(self.path + filename, mode='wb') as f:
+                #     await f.write(await resp.read())
+                img = Image.open(BytesIO(await resp.read()))
+                img.putpixel((0, 0), (0, 0, 0))
+                # img[0, 0] = (0, 0, 0)
+                # img = img.convert('RGB')
+                img.save(self.path + filename)
         self.downloaded_cache_list.append(filename)
         await self.mysql_image.fetch('UPDATE `konachan` SET `file_name`=\'{}\' WHERE `jpeg_url` = \'{}\''.format(filename, url))
         return filename
 
-    async def get_image_url(self, page=1, limit=1, tags=['-all_male']):
+    async def get_image_url(self, page=1, limit=1, tags=['-all_male', '-rating:e']):
         tags_str = ''
         for tag in tags:
             tags_str = tags_str + '+' + tag
         url = 'http://konachan.net/post.json?page={}&limit={}&tags={}'.format(
             page, limit, tags_str)
-        async with aiohttp.ClientSession(trust_env=True) as session:
-            async with session.get(url) as resp:
-                img_json = ujson.loads(await resp.text())
+        print('----------URL----------')
+        print(url)
+        while True:
+            async with aiohttp.ClientSession(trust_env=True) as session:
+                async with session.get(url) as resp:
+                    try:
+                        img_json = ujson.loads(await resp.text())
+                    except:
+                        continue
+                    break
         img_url = []
         for img in img_json:
             if not await self.mysql_image.fetch('SELECT id FROM `konachan` WHERE img_id = {}'.format(img['id'])):
+                print('----------SQL----------')
+                print('INSERT INTO `konachan`(`img_id`, `tags`, `source`, `file_url`, `preview_url`, `sample_url`, `jpeg_url`, `rating`) VALUES ({},\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\')'
+                      .format(img['id'], ujson.dumps(img['tags'].split(), ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), img['source'], img['file_url'], img['preview_url'], img['sample_url'], img['jpeg_url'], img['rating']))
                 await self.mysql_image.fetch('INSERT INTO `konachan`(`img_id`, `tags`, `source`, `file_url`, `preview_url`, `sample_url`, `jpeg_url`, `rating`) VALUES ({},\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\',\'{}\')'
-                                             .format(img['id'], ujson.dumps(img['tags'].split(), ensure_ascii=False), img['source'], img['file_url'], img['preview_url'], img['sample_url'], img['jpeg_url'], img['rating']))
+                                             .format(img['id'], ujson.dumps(img['tags'].split(), ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), img['source'], img['file_url'], img['preview_url'], img['sample_url'], img['jpeg_url'], img['rating']))
                 img_url.append(img['jpeg_url'])
         return img_url
 
