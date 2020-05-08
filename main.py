@@ -77,8 +77,14 @@ async def recv_message(msg_type, uid, user_id, data):
                 page = 1201
                 url = []
                 if not tags:
+                    row = await mysql_hobby.fetch('SELECT `id` FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    if not row:
+                        add_message(send_msg, '请先订阅')
+                        continue
                     tags = tags + await get_hobby_tag(user_id, 2)
                     tags = tags + await get_hobby_tag(user_id, 2, False)
+                if msg_type != 'private':
+                    tags.append('rating:s')
                 while True:
                     url = await k_site.get_image_url(random.randint(1, page), 1, tags)
                     if url or page == 1:
