@@ -39,7 +39,7 @@ class konachan():
     async def update_tags(self):
         # ON DUPLICATE KEY UPDATE
         async with aiohttp.ClientSession(trust_env=True) as session:
-            async with session.get('http://konachan.net/tag.json?limit=0') as resp:
+            async with session.get('http://konachan.net/tag.json?api_key=vI49DRwXr6k1Vi_0_qBm9Q&limit=0') as resp:
                 tags = ujson.loads(await resp.text())
         for tag in tags:
             print('INSERT INTO `konachan_tags` VALUES ({},\'{}\',{},{},{}) ON DUPLICATE KEY UPDATE `name`=\'{}\',`count`={},`type`={},`ambiguous`={}'
@@ -61,7 +61,7 @@ class konachan():
         urls = urls + await self.get_image_url(random.randint(1, 1000), 5)
         # print(urls)
         for url in urls:
-            asyncio.create_task(self.image_download(url))
+            self.downloaded_cache_list.append(await self.image_download(url))
 
     async def image_download(self, url):
         filename = urllib.parse.unquote(os.path.basename(url))
@@ -76,18 +76,15 @@ class konachan():
                     # img[0, 0] = (0, 0, 0)
                     # img = img.convert('RGB')
                     img.save(self.path + filename)
-            self.downloaded_cache_list.append(filename)
             await self.mysql_image.fetch('UPDATE `konachan` SET `file_name`=\'{}\' WHERE `jpeg_url` = \'{}\''.format(filename.replace("\\", "\\\\").replace("'", "\\'"), url))
-        else:
-            self.downloaded_cache_list.append(filename)
         return filename
 
-    async def get_image_url(self, page=1, limit=1, tags=['-all_male']):
+    async def get_image_url(self, page=1, limit=1, tags=['-all_male', 'rating:s']):
         # tags.append('-rating:e')
         tags_str = ''
         for tag in tags:
             tags_str = tags_str + '+' + tag
-        url = 'http://konachan.net/post.json?page={}&limit={}&tags={}'.format(
+        url = 'http://konachan.net/post.json?api_key=vI49DRwXr6k1Vi_0_qBm9Q&page={}&limit={}&tags={}'.format(
             page, limit, tags_str)
         print('----------URL----------')
         print(url)

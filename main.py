@@ -72,12 +72,12 @@ async def recv_message(msg_type, uid, user_id, data):
         # 收到包含'/涩图 xxx'
         # 查找对应标签图
         elif msg['type'] == 'text':
-            if '/涩图' in msg['data'].get('text'):
+            if '/涩图' in msg['data'].get('text') or msg['data'].get('text') == '涩图':
                 tags = msg['data'].get('text').split()[1:]
-                page = 1201
+                page = 101
                 url = []
                 if not tags:
-                    row = await mysql_hobby.fetch('SELECT `id` FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    row = await mysql_hobby.fetch('SELECT `uid` FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                     if not row:
                         add_message(send_msg, '请先订阅')
                         continue
@@ -86,12 +86,12 @@ async def recv_message(msg_type, uid, user_id, data):
                 if msg_type != 'private':
                     tags.append('rating:s')
                 while True:
-                    url = await k_site.get_image_url(random.randint(1, page), 1, tags)
-                    if url or page == 1:
+                    url = await k_site.get_image_url(random.randint(1, page), 10, tags)
+                    page = int(page / 2)
+                    if url or page == 0:
                         break
-                    page = page - 300
                 if url:
-                    filename = await k_site.image_download(url[0])
+                    filename = await k_site.image_download(url[random.randint(0, len(url)-1)])
                     add_image(send_msg, filename)
                 else:
                     add_message(send_msg, '没有找到哦')
@@ -124,39 +124,38 @@ async def recv_message(msg_type, uid, user_id, data):
                     add_message(send_msg, '权限不足')
             # /取消订阅
             # 每日推荐
-            elif msg['data'].get('text') == '取消订阅':
+            elif msg['data'].get('text') == '取消订阅' or '/取消订阅' in msg['data'].get('text'):
                 if msg_type == 'group':
                     add_message(send_msg, '私戳我')
                 elif msg_type == 'private':
-                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                     if row:
                         try:
-                            await mysql_hobby.fetch('DELETE FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                            await mysql_hobby.fetch('DELETE FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                         except:
                             add_message(send_msg, '取消订阅失败')
                             break
                         add_message(send_msg, '取消订阅成功，我将忘记一切关于Master的记忆')
             # /订阅
             # 每日推荐
-            elif msg['data'].get('text') == '订阅':
+            elif msg['data'].get('text') == '订阅' or '/订阅' in msg['data'].get('text'):
                 if msg_type == 'group':
                     add_message(send_msg, '私戳我')
                 elif msg_type == 'private':
-                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(uid))
+                    row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                     if row:
                         add_message(send_msg, 'Master已经订阅过了')
                     else:
                         try:
-                            await mysql_hobby.fetch('INSERT INTO `konachan`(`uid`, `last`) VALUES (\'{}\', \'2000-01-01\')'.format(uid))
+                            await mysql_hobby.fetch('INSERT INTO `konachan`(`uid`, `last`) VALUES (\'{}\', \'2000-01-01\')'.format(user_id))
                         except:
                             add_message(send_msg, '订阅失败')
                             break
-                        add_message(send_msg, '订阅成功，从今天起你就是我的Master了！\n')
-                        add_message(
-                            send_msg, '在任何地方，对于当前聊天的上一张图片，喜欢的扣1，不喜欢的扣2')
+                        add_message(send_msg, '订阅成功，从今天起你就是我的Master了！\n使用"/涩图"命令将根据你的喜好进行推荐\n')
+                        add_message(send_msg, '在任何地方，对于当前聊天的上一张图片，喜欢的扣1，不喜欢的扣2')
             # 1
             # 喜欢推荐
-            elif msg['data'].get('text') == '1':
+            elif msg['data'].get('text') == '1' or msg['data'].get('text')[0:2] == '1 ':
                 row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                 if not row:
                     continue
@@ -165,8 +164,13 @@ async def recv_message(msg_type, uid, user_id, data):
                 else:
                     user_tags = {}
                 user_num = row[0][2]
-                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT 1'
-                                             .format(msg_type[0].upper(), uid, my_qq))
+                num = 1
+                m = msg['data'].get('text').split()
+                if len(m) > 1:
+                    if (m[1].isdigit()):
+                        num = int(m[1])
+                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT {},1'
+                                             .format(msg_type[0].upper(), uid, my_qq, num - 1))
                 if row:
                     msg = ujson.loads(row[0][0])
                     filename = msg[0]['data']['file']
@@ -181,7 +185,7 @@ async def recv_message(msg_type, uid, user_id, data):
                     add_message(send_msg, '(๑•̀ㅂ•́)و✧')
             # 2
             # 不喜欢推荐
-            elif msg['data'].get('text') == '2':
+            elif msg['data'].get('text') == '2' or msg['data'].get('text')[0:2] == '2 ':
                 row = await mysql_hobby.fetch('SELECT * FROM `konachan` WHERE `uid` = \'{}\''.format(user_id))
                 if not row:
                     continue
@@ -189,9 +193,14 @@ async def recv_message(msg_type, uid, user_id, data):
                     user_tags = ujson.loads(row[0][1])
                 else:
                     user_tags = {}
-                user_num = row[0][2]
-                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT 1'
-                                             .format(msg_type[0].upper(), uid, my_qq))
+                user_num = row[0][3]
+                num = 1
+                m = msg['data'].get('text').split()
+                if len(m) > 1:
+                    if (m[1].isdigit()):
+                        num = int(m[1])
+                row = await mysql_chat.fetch('SELECT `msg` FROM `{}{}` WHERE `uid` = \'{}\' AND `msg` LIKE \'%"type": "image"%\' ORDER BY id DESC LIMIT {},1'
+                                             .format(msg_type[0].upper(), uid, my_qq, num - 1))
                 if row:
                     msg = ujson.loads(row[0][0])
                     filename = msg[0]['data']['file']
@@ -201,26 +210,26 @@ async def recv_message(msg_type, uid, user_id, data):
                             user_tags[tag] = user_tags[tag] - 1
                         else:
                             user_tags[tag] = -1
-                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\' WHERE `uid` = \'{}\''
-                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_id))
+                    await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\',`-num` = {} WHERE `uid` = \'{}\''
+                                            .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_num + 1, user_id))
                     add_message(send_msg, 'ヽ(ー_ー )ノ')
     if send_msg:
         await send_message(msg_type, uid, send_msg)
 
 
 async def get_hobby_tag(uid, c, unsigned=True):
-    tags, num = (await mysql_hobby.fetch('SELECT `tags`, `num` FROM `konachan` WHERE `uid` = \'{}\''.format(uid)))[0]
+    tags, like_num, unlike_num = (await mysql_hobby.fetch('SELECT `tags`, `num`, `-num` FROM `konachan` WHERE `uid` = \'{}\''.format(uid)))[0]
     tags = ujson.loads(tags)
     new_tags = {}
     r_tag = []
     if tags:
         if unsigned:
             for tag, value in tags.items():
-                if value * 10 > num:
+                if value * 10 > like_num:
                     new_tags[tag] = value
         else:
             for tag, value in tags.items():
-                if value * -10 > num:
+                if value * -10 > unlike_num:
                     new_tags['-'+tag] = value * -1
         sorted(new_tags.items(), key=lambda item: item[1], reverse=True)
         for i in range(c):
@@ -236,6 +245,7 @@ async def get_hobby_tag(uid, c, unsigned=True):
                 t = bisect.bisect_right(sum_list, t)
                 del new_tags[tags_list[t]]
                 r_tag.append(tags_list.pop(t))
+        print(r_tag)
         return r_tag
 
 
@@ -390,8 +400,9 @@ async def ws_client():
     send_queue = asyncio.PriorityQueue()
     await mysql_chat.create('qq_chat')
     await mysql_hobby.create('qq_hobby')
-    await asyncio.sleep(3)
+    await asyncio.sleep(1)
     await k_site.init()
+    await asyncio.sleep(1)
     async with websockets.connect(uri) as websocket:
         # 并发写法1，相当于wait()
         await asyncio.gather(
