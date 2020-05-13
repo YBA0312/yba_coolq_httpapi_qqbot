@@ -72,7 +72,7 @@ class konachan():
                     # async with aiofiles.open(self.path + filename, mode='wb') as f:
                     #     await f.write(await resp.read())
                     img = Image.open(BytesIO(await resp.read()))
-                    img.putpixel((0, 0), (0, 0, 0))
+                    img.putpixel((0, 0), (255, 255, 255))
                     # img[0, 0] = (0, 0, 0)
                     # img = img.convert('RGB')
                     img.save(self.path + filename)

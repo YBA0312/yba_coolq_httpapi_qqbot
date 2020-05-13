@@ -28,6 +28,8 @@ import uvloop
 import sql
 # konachan
 import konachan
+# 搜图
+import saucenao
 # 二维码
 # import qrcode
 # import pyzbar
@@ -81,8 +83,12 @@ async def recv_message(msg_type, uid, user_id, data):
                     if not row:
                         add_message(send_msg, '请先订阅')
                         continue
-                    tags = tags + await get_hobby_tag(user_id, 2)
-                    tags = tags + await get_hobby_tag(user_id, 2, False)
+                    try:
+                        tags = tags + await get_hobby_tag(user_id, 2)
+                        tags = tags + await get_hobby_tag(user_id, 2, False)
+                    except TypeError:
+                        add_message(send_msg, '我还不清楚Master的喜好哦，先标记一些吧')
+                        continue
                 if msg_type != 'private':
                     tags.append('rating:s')
                 while True:
@@ -213,12 +219,17 @@ async def recv_message(msg_type, uid, user_id, data):
                     await mysql_hobby.fetch('UPDATE `konachan` SET `tags`=\'{}\',`-num` = {} WHERE `uid` = \'{}\''
                                             .format(ujson.dumps(user_tags, ensure_ascii=False).replace("\\", "\\\\").replace("'", "\\'"), user_num + 1, user_id))
                     add_message(send_msg, 'ヽ(ー_ー )ノ')
+            elif msg_type == 'private' and msg['data'].get('text'):
+                m = msg['data'].get('text').replace("吗","").replace("?","").replace("？","").replace("不","").replace("吗","").replace("我","你")
+                add_message(send_msg, m)
     if send_msg:
         await send_message(msg_type, uid, send_msg)
 
 
 async def get_hobby_tag(uid, c, unsigned=True):
     tags, like_num, unlike_num = (await mysql_hobby.fetch('SELECT `tags`, `num`, `-num` FROM `konachan` WHERE `uid` = \'{}\''.format(uid)))[0]
+    if not tags:
+        return
     tags = ujson.loads(tags)
     new_tags = {}
     r_tag = []
@@ -433,6 +444,7 @@ if __name__ == '__main__':
     mysql_hobby = sql.mysql()
     # aiohttp
     k_site = konachan.konachan()
+    s_site = saucenao.saucenao()
     # 练练手，这里使用底层API
     # try:
     #     ws_loop = asyncio.get_event_loop_policy()
